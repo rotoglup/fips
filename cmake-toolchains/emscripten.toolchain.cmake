@@ -3,6 +3,9 @@
 #	Fips cmake toolchain file for cross-compiling to emscripten.
 #-------------------------------------------------------------------------------
 
+# TODO(rotoglup) Is a local emsdk used in priority over an 'activated' emsdk in the environment ?
+# TODO(rotoglup) How should we know when/how to use an 'external' emsdk ? detect if already activated ?
+
 #
 # FIXME FIXME FIXME:
 #
@@ -13,33 +16,57 @@
 #   use the --em-config like the C/CXX compilers.
 #
 
-# define emscripten SDK version
-set(FIPS_EMSCRIPTEN_SDK_VERSION "incoming")
+# CMake invokes the toolchain file multiple times, prevent this to prevent noise in warnings when using an external emsdk
+if(EMSC_TOOLCHAIN_INCLUDED)
+  return()
+endif(EMSC_TOOLCHAIN_INCLUDED)
+set(EMSC_TOOLCHAIN_INCLUDED true)
+
+#-------------------------------------------------------------------------------
+# find the emscripten SDK location and version
+# set the following variables accordingly : EMSCRIPTEN_ROOT_PATH, EMSCRIPTEN_DOT_FILE
+
 if (${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Windows")
-    set(EMSC_EMSDK_DIRNAME "../fips-sdks/win/emsdk-portable/emscripten/${FIPS_EMSCRIPTEN_SDK_VERSION}")
+    set(FIPS_HOST_PLATFORM "win")
+    set(EMSDK_ENV "emsdk_env.bat")
 elseif (${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Darwin")
-    set(EMSC_EMSDK_DIRNAME "../fips-sdks/osx/emsdk-portable/emscripten/${FIPS_EMSCRIPTEN_SDK_VERSION}")
+    set(FIPS_HOST_PLATFORM "osx")
+    set(EMSDK_ENV "emsdk_env.sh")
 elseif (${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Linux")
-    set(EMSC_EMSDK_DIRNAME "../fips-sdks/linux/emsdk-portable/emscripten/${FIPS_EMSCRIPTEN_SDK_VERSION}")
+    set(FIPS_HOST_PLATFORM "linux")
+    set(EMSDK_ENV "emsdk_env.sh")
 endif()
 
-# find the emscripten SDK and set the "EMSC_HAS_LOCAL_CONFIG" variable
-macro(find_emscripten_sdk)
-    # first check for the official EMSDK, this does not allow to override
-    # the location of the .emscripten config file
-    get_filename_component(EMSCRIPTEN_ROOT_PATH "${CMAKE_CURRENT_LIST_DIR}/../${EMSC_EMSDK_DIRNAME}" ABSOLUTE)
-    if (NOT EXISTS "${EMSCRIPTEN_ROOT_PATH}/emcc")
-        message(FATAL_ERROR "Could not find emscripten SDK! Please run 'fips setup emscripten'!")
-    endif()
-endmacro()
+# find the local emscripten SDK
+set(EMSC_EMSDK_DIRNAME "../fips-sdks/${FIPS_HOST_PLATFORM}/emsdk-portable")
+get_filename_component(EMSC_EMSDK_ROOT_PATH "${CMAKE_CURRENT_LIST_DIR}/../${EMSC_EMSDK_DIRNAME}" ABSOLUTE)
+get_filename_component(EMSCRIPTEN_DOT_FILE "${EMSC_EMSDK_ROOT_PATH}/.emscripten" ABSOLUTE)
 
-# find the emscripten SDK
-find_emscripten_sdk()
-set(EMSCRIPTEN_LLVM_ROOT "${EMSCRIPTEN_ROOT_PATH}/../../clang/fastcomp/build_${FIPS_EMSCRIPTEN_SDK_VERSION}_64/bin")
+message("DEBUG, EMSCRIPTEN_DOT_FILE == '${EMSCRIPTEN_DOT_FILE}'")
+
+if (FALSE) # TODO(rotoglup) if (EXISTS "${EMSCRIPTEN_DOT_FILE}") ? if (NOT $ENV{EM_CONFIG}) ?
+
+    # TODO(rotoglup) detect the activated emscription version ; 
+    #    * using the output of emsk_env.sh|bat ?
+    #    * using the content of the .emscripten file ?
+    # then set EMSCRIPTEN_ROOT_PATH
+
+else()
+
+    # no sdk-embedded config found, use the default (~/.emscripten and ~/.emscripten_cache)
+    message(WARNING "Could not find a local emsdk version, using currently activated emsdk")
+    set(EMSCRIPTEN_DOT_FILE "$ENV{EM_CONFIG}")
+    if (NOT EXISTS "${EMSCRIPTEN_DOT_FILE}")
+        message(FATAL_ERROR "Could not find a valid activated emsdk : EM_CONFIG='$ENV{EM_CONFIG}' -- '${EMSCRIPTEN_DOT_FILE}'")
+    endif()
+    set(EMSCRIPTEN_ROOT_PATH "$ENV{EMSCRIPTEN}")
+
+endif()
+
+#-------------------------------------------------------------------------------
 
 # Normalize, convert Windows backslashes to forward slashes or CMake will crash.
 get_filename_component(EMSCRIPTEN_ROOT_PATH "${EMSCRIPTEN_ROOT_PATH}" ABSOLUTE)
-get_filename_component(EMSCRIPTEN_LLVM_ROOT "${EMSCRIPTEN_LLVM_ROOT}" ABSOLUTE)
 
 set(FIPS_PLATFORM EMSCRIPTEN)
 set(FIPS_PLATFORM_NAME "emsc")
@@ -159,24 +186,19 @@ set(COMPILING on)
 set(CMAKE_CROSSCOMPILING TRUE)
 set(CMAKE_SYSTEM_PROCESSOR x86)
 
-# Find the .emscripten file and cache, this is either setup locally in the
-# emscripten SDK (this is the preferred way and used by 'fips setup emscripten',
-# but it's a brand new feature: https://github.com/juj/emsdk/issues/24)
-# If an SDK-local .emscripten is not found, fall back to ~/.emscripten
-get_filename_component(EMSCRIPTEN_DOT_FILE "${EMSCRIPTEN_ROOT_PATH}/../../.emscripten" ABSOLUTE)
-if (EMSCRIPTEN_TRACING)
+if (EMSCRIPTEN_TRACING) # TODO(rotoglup) check these paths
     # set a separate .emscripten_cache when tracing since this will use an 
     # instrumented dlmalloc.c
     get_filename_component(EMSCRIPTEN_CACHE "${EMSCRIPTEN_ROOT_PATH}/../../.emscripten_cache_tracing" ABSOLUTE)
 else()
     get_filename_component(EMSCRIPTEN_CACHE "${EMSCRIPTEN_ROOT_PATH}/../../.emscripten_cache" ABSOLUTE)
 endif()
+
 if (EXISTS "${EMSCRIPTEN_DOT_FILE}")
+    # TODO(rotoglup) not sure the --cache argument is the way to go : 
+    #   EM_CACHE environment variable seems appropriate for embedded emsdks, see https://github.com/kripken/emscripten/pull/3491
     set(EMSC_COMMON_FLAGS "${EMSC_COMMON_FLAGS} --em-config ${EMSCRIPTEN_DOT_FILE} --cache ${EMSCRIPTEN_CACHE}")
     set(EMSC_AR_FLAGS "${EMSC_AR_FLAGS} --em-config ${EMSCRIPTEN_DOT_FILE}")
-else()
-    # no sdk-embedded config found, use the default (~/.emscripten and ~/.emscripten_cache)
-    message(WARNING "Using global emscripten config and cache in '~'!")
 endif()
 
 # tool suffic (.bat on windows)
